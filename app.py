@@ -1,7 +1,12 @@
 import csv
 import random
 import time
+import threading
 from urllib.parse import urljoin, urlparse
+from io import StringIO
+
+import requests
+from flask import Flask
 
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 
@@ -10,23 +15,30 @@ from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeo
 # ============================================================
 TARGET_URL = "https://www.profitablecpmratenetwork.com/c0d5wzw6?key=e5c2e041d8b3869a1d8fe66890d61e51"
 ACTION_DELAY_MS = 1500
-SIMULATION_CSV = "https://raw.githubusercontent.com/radoslawsznajder/agregator.eu/refs/heads/main/simulation_profiles.csv"   # kolumny: ip_address,user_agent
+# Może być ścieżka lokalna albo URL (tu: raw GitHub)
+SIMULATION_CSV = "https://raw.githubusercontent.com/radoslawsznajder/agregator.eu/refs/heads/main/simulation_profiles.csv"
 REFERER = "https://agregator.eu/"
 
 HEADLESS = True
 PAGE_TIMEOUT_MS = 1000
 MAX_LINKS_TO_SAMPLE = 5
 
-# Jeśli chcesz limit zamiast pętli nieskończonej:
-# 0 = bez końca, np. do Ctrl+C
-# >0 = konkretna liczba iteracji
+# 0 = bez końca, >0 = konkretna liczba iteracji
 SCAN_COUNT = 0
 
 
 def load_simulation_profiles(csv_path: str) -> list[dict]:
-    profiles = []
+    profiles: list[dict] = []
 
-    with open(csv_path, "r", encoding="utf-8-sig", newline="") as f:
+    # Obsługa zarówno lokalnej ścieżki jak i URL
+    if csv_path.startswith(("http://", "https://")):
+        resp = requests.get(csv_path, timeout=10)
+        resp.raise_for_status()
+        f = StringIO(resp.text)
+    else:
+        f = open(csv_path, "r", encoding="utf-8-sig", newline="")
+
+    with f:
         reader = csv.DictReader(f)
         fieldnames = reader.fieldnames or []
 
@@ -42,10 +54,12 @@ def load_simulation_profiles(csv_path: str) -> list[dict]:
             user_agent = (row.get("user_agent") or "").strip()
 
             if ip_address and user_agent:
-                profiles.append({
-                    "ip_address": ip_address,
-                    "user_agent": user_agent,
-                })
+                profiles.append(
+                    {
+                        "ip_address": ip_address,
+                        "user_agent": user_agent,
+                    }
+                )
 
     if not profiles:
         raise ValueError(f"Brak poprawnych rekordów w pliku {csv_path}")
@@ -69,10 +83,10 @@ def extract_internal_links(page, base_url: str) -> list[str]:
         elements => elements
             .map(el => el.getAttribute('href'))
             .filter(Boolean)
-        """
+        """,
     )
 
-    cleaned = []
+    cleaned: list[str] = []
     for href in hrefs:
         href = (href or "").strip()
         if not href:
@@ -83,7 +97,9 @@ def extract_internal_links(page, base_url: str) -> list[str]:
 
         absolute = urljoin(base_url, href)
 
-        if absolute.startswith(("http://", "https://")) and same_domain(base_url, absolute):
+        if absolute.startswith(("http://", "https://")) and same_domain(
+            base_url, absolute
+        ):
             cleaned.append(absolute)
 
     deduped = list(dict.fromkeys(cleaned))
@@ -101,7 +117,7 @@ def human_like_interaction(page):
         page.mouse.move(
             random.randint(100, 800),
             random.randint(100, 500),
-            steps=random.randint(10, 30)
+            steps=random.randint(10, 30),
         )
     except Exception:
         pass
@@ -238,7 +254,7 @@ def print_result(result: dict):
 
 def main():
     profiles = load_simulation_profiles(SIMULATION_CSV)
-    all_results = []
+    all_results: list[dict] = []
     scan_no = 1
 
     try:
@@ -255,7 +271,9 @@ def main():
             else:
                 while scan_no <= SCAN_COUNT:
                     profile = random.choice(profiles)
-                    print(f"\n[{scan_no}/{SCAN_COUNT}] Start | profile_ip={profile['ip_address']}")
+                    print(
+                        f"\n[{scan_no}/{SCAN_COUNT}] Start | profile_ip={profile['ip_address']}"
+                    )
                     result = run_single_scan(p, scan_no, profile)
                     all_results.append(result)
                     print_result(result)
@@ -271,5 +289,23 @@ def main():
             print_result(row)
 
 
-if __name__ == "__main__":
+# ============================================================
+# CZĘŚĆ WEBOWA (Flask) DLA RENDER / GUNICORN
+# ============================================================
+
+app = Flask(__name__)  # <- tego szuka gunicorn w "app:app"
+
+
+def worker():
+    # Jedno wywołanie main() – w środku jest pętla nieskończona
+    # Jeśli chcesz auto-restart po craszu, możesz dodać pętlę while True + try/except
     main()
+
+
+# startujemy Playwright worker w tle przy imporcie modułu
+threading.Thread(target=worker, daemon=True).start()
+
+
+@app.route("/")
+def health():
+    return "OK", 200
