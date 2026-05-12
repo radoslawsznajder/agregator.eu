@@ -15,8 +15,10 @@ from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeo
 # ============================================================
 TARGET_URL = "https://www.profitablecpmratenetwork.com/c0d5wzw6?key=e5c2e041d8b3869a1d8fe66890d61e51"
 ACTION_DELAY_MS = 1500
+
 # Może być ścieżka lokalna albo URL (tu: raw GitHub)
-SIMULATION_CSV = "https://raw.githubusercontent.com/radoslawsznajder/agregator.eu/refs/heads/main/simulation_profiles.csv"
+SIMULATION_CSV = "https://raw.githubusercontent.com/radoslawsznajder/agregator.eu/refs/heads/main/simulation_profiles.csv"  # kolumny: ip_address,user_agent
+
 REFERER = "https://agregator.eu/"
 
 HEADLESS = True
@@ -298,11 +300,10 @@ app = Flask(__name__)  # <- tego szuka gunicorn w "app:app"
 
 def worker():
     # Jedno wywołanie main() – w środku jest pętla nieskończona
-    # Jeśli chcesz auto-restart po craszu, możesz dodać pętlę while True + try/except
     main()
 
 
-# startujemy Playwright worker w tle przy imporcie modułu
+# Startujemy Playwright worker w tle przy imporcie modułu
 threading.Thread(target=worker, daemon=True).start()
 
 
