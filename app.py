@@ -307,6 +307,6 @@ def worker():
 threading.Thread(target=worker, daemon=True).start()
 
 
-@app.route("/")
-def health():
+@app.route("/healthz")
+def healthz():
     return "OK", 200
